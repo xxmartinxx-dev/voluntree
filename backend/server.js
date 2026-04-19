@@ -21,6 +21,11 @@ app.use('/api/auth', authRoutes);
 app.use('/api/offers', offersRoutes);
 app.use('/api/applications', applicationsRoutes);
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+// Export for Vercel serverless functions
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;
