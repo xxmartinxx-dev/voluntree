@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+/* Twoje kolory natury możesz zdefiniować tutaj w v4 */
+@theme {
+  --color-nature-green: #2D5A27;
+  --color-nature-leaf: #7FB069;
+  --color-nature-earth: #4E3B31;
+  --color-nature-sand: #F2E8CF;
+  
+  --color-nature-50: #F0F9F4;
+  --color-nature-100: #DDF3E4;
+  --color-nature-200: #BDE6CB;
+  --color-nature-300: #90D4AA;
+  --color-nature-400: #5FBB83;
+  --color-nature-500: #3CA163;
+  --color-nature-600: #2A814C;
+  --color-nature-700: #24673F;
+  --color-nature-800: #205234;
+  --color-nature-900: #1B442C;
+}

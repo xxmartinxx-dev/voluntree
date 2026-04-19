@@ -1,0 +1,6 @@
+node_modules/
+.env
+voluntree.db
+dist/
+build/
+.DS_Store
