@@ -1,61 +1,67 @@
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+require('dotenv').config();
+const { Pool } = require('pg');
 
-const dbPath = path.resolve(__dirname, 'voluntree.db');
-
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Error connecting to SQLite database', err.message);
-  } else {
-    console.log('Connected to the SQLite database.');
-    initDb();
+const db = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false // Often needed for free cloud DBs like Neon/Supabase
   }
 });
 
 function initDb() {
-  db.serialize(() => {
-    // Users table
-    db.run(`
-      CREATE TABLE IF NOT EXISTS Users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'volunteer',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
+  const initSchemaQuery = `
+    CREATE TABLE IF NOT EXISTS Users (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) UNIQUE NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      role VARCHAR(50) NOT NULL DEFAULT 'volunteer',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 
-    // Offers table
-    db.run(`
-      CREATE TABLE IF NOT EXISTS Offers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL,
-        description TEXT NOT NULL,
-        location TEXT NOT NULL,
-        category TEXT NOT NULL,
-        organization_id INTEGER,
-        status TEXT NOT NULL DEFAULT 'active',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (organization_id) REFERENCES Users (id)
-      )
-    `);
+    CREATE TABLE IF NOT EXISTS Offers (
+      id SERIAL PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      description TEXT NOT NULL,
+      location VARCHAR(255) NOT NULL,
+      category VARCHAR(100) NOT NULL,
+      organization_id INTEGER,
+      status VARCHAR(50) NOT NULL DEFAULT 'active',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (organization_id) REFERENCES Users (id) ON DELETE SET NULL
+    );
 
-    // Applications table
-    db.run(`
-      CREATE TABLE IF NOT EXISTS Applications (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        volunteer_id INTEGER,
-        offer_id INTEGER,
-        status TEXT NOT NULL DEFAULT 'pending',
-        applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (volunteer_id) REFERENCES Users (id),
-        FOREIGN KEY (offer_id) REFERENCES Offers (id)
-      )
-    `);
-    
-    console.log('Database tables initialized.');
-  });
+    CREATE TABLE IF NOT EXISTS Applications (
+      id SERIAL PRIMARY KEY,
+      volunteer_id INTEGER,
+      offer_id INTEGER,
+      status VARCHAR(50) NOT NULL DEFAULT 'pending',
+      applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (volunteer_id) REFERENCES Users (id) ON DELETE CASCADE,
+      FOREIGN KEY (offer_id) REFERENCES Offers (id) ON DELETE CASCADE
+    );
+  `;
+
+  db.query(initSchemaQuery)
+    .then(() => {
+      console.log('Database tables initialized or verified.');
+    })
+    .catch(err => {
+      console.error('Error initializing database tables:', err);
+    });
 }
+
+db.connect()
+  .then(() => {
+    console.log('Connected to the PostgreSQL database.');
+    initDb();
+  })
+  .catch(err => {
+    if (process.env.DATABASE_URL) {
+      console.error('Error connecting to PostgreSQL:', err);
+    } else {
+      console.log('No DATABASE_URL provided. Skipping DB connection.');
+    }
+  });
 
 module.exports = db;

@@ -4,7 +4,7 @@ const db = require('../db');
 const { authMiddleware, volOnlyMiddleware, orgOnlyMiddleware } = require('../middleware/auth');
 
 // POST /api/applications - Volunteer applying for an offer
-router.post('/', authMiddleware, volOnlyMiddleware, (req, res) => {
+router.post('/', authMiddleware, volOnlyMiddleware, async (req, res) => {
   const { offer_id } = req.body;
   const volunteerId = req.user.id;
 
@@ -12,31 +12,29 @@ router.post('/', authMiddleware, volOnlyMiddleware, (req, res) => {
     return res.status(400).json({ error: 'Offer ID is required.' });
   }
 
-  // Check if offer exists and is active
-  db.get(`SELECT status FROM Offers WHERE id = ?`, [offer_id], (err, offer) => {
-    if (err) return res.status(500).json({ error: 'Internal server error.' });
-    if (!offer) return res.status(404).json({ error: 'Offer not found.' });
-    if (offer.status !== 'active') return res.status(400).json({ error: 'Offer is closed.' });
+  try {
+    // Check if offer exists and is active
+    const offerQuery = await db.query(`SELECT status FROM Offers WHERE id = $1`, [offer_id]);
+    if (offerQuery.rows.length === 0) return res.status(404).json({ error: 'Offer not found.' });
+    if (offerQuery.rows[0].status !== 'active') return res.status(400).json({ error: 'Offer is closed.' });
 
     // Check if already applied
-    db.get(`SELECT id FROM Applications WHERE volunteer_id = ? AND offer_id = ?`, [volunteerId, offer_id], (err, existing) => {
-      if (err) return res.status(500).json({ error: 'Internal server error.' });
-      if (existing) return res.status(400).json({ error: 'Already applied to this offer.' });
+    const existing = await db.query(`SELECT id FROM Applications WHERE volunteer_id = $1 AND offer_id = $2`, [volunteerId, offer_id]);
+    if (existing.rows.length > 0) return res.status(400).json({ error: 'Already applied to this offer.' });
 
-      db.run(
-        `INSERT INTO Applications (volunteer_id, offer_id) VALUES (?, ?)`,
-        [volunteerId, offer_id],
-        function (err) {
-          if (err) return res.status(500).json({ error: 'Internal server error.' });
-          res.status(201).json({ id: this.lastID, offer_id, status: 'pending' });
-        }
-      );
-    });
-  });
+    const insertResult = await db.query(
+      `INSERT INTO Applications (volunteer_id, offer_id) VALUES ($1, $2) RETURNING id`,
+      [volunteerId, offer_id]
+    );
+    res.status(201).json({ id: insertResult.rows[0].id, offer_id, status: 'pending' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
 });
 
 // GET /api/applications/volunteer - Volunteer viewing their applications
-router.get('/volunteer', authMiddleware, volOnlyMiddleware, (req, res) => {
+router.get('/volunteer', authMiddleware, volOnlyMiddleware, async (req, res) => {
   const volunteerId = req.user.id;
   const query = `
     SELECT Applications.id as application_id, Applications.status as application_status, Applications.applied_at,
@@ -44,21 +42,21 @@ router.get('/volunteer', authMiddleware, volOnlyMiddleware, (req, res) => {
     FROM Applications
     JOIN Offers ON Applications.offer_id = Offers.id
     JOIN Users ON Offers.organization_id = Users.id
-    WHERE Applications.volunteer_id = ?
+    WHERE Applications.volunteer_id = $1
     ORDER BY Applications.applied_at DESC
   `;
 
-  db.all(query, [volunteerId], (err, rows) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).json({ error: 'Internal server error.' });
-    }
+  try {
+    const { rows } = await db.query(query, [volunteerId]);
     res.json(rows);
-  });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
 });
 
 // GET /api/applications/organization - Org viewing applicants to their offers
-router.get('/organization', authMiddleware, orgOnlyMiddleware, (req, res) => {
+router.get('/organization', authMiddleware, orgOnlyMiddleware, async (req, res) => {
   const orgId = req.user.id;
   const query = `
     SELECT Applications.id as application_id, Applications.status as application_status, Applications.applied_at,
@@ -67,21 +65,21 @@ router.get('/organization', authMiddleware, orgOnlyMiddleware, (req, res) => {
     FROM Applications
     JOIN Offers ON Applications.offer_id = Offers.id
     JOIN Users ON Applications.volunteer_id = Users.id
-    WHERE Offers.organization_id = ? AND Applications.status = 'pending'
+    WHERE Offers.organization_id = $1 AND Applications.status = 'pending'
     ORDER BY Applications.applied_at ASC
   `;
 
-  db.all(query, [orgId], (err, rows) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).json({ error: 'Internal server error.' });
-    }
+  try {
+    const { rows } = await db.query(query, [orgId]);
     res.json(rows);
-  });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
 });
 
 // PUT /api/applications/:id/status - Org accepts or rejects
-router.put('/:id/status', authMiddleware, orgOnlyMiddleware, (req, res) => {
+router.put('/:id/status', authMiddleware, orgOnlyMiddleware, async (req, res) => {
   const { status } = req.body;
   const applicationId = req.params.id;
   const orgId = req.user.id;
@@ -90,25 +88,22 @@ router.put('/:id/status', authMiddleware, orgOnlyMiddleware, (req, res) => {
     return res.status(400).json({ error: 'Invalid status.' });
   }
 
-  // Ensure this application belongs to an offer owned by the org
-  db.get(
-    `SELECT Offers.organization_id FROM Applications JOIN Offers ON Applications.offer_id = Offers.id WHERE Applications.id = ?`,
-    [applicationId],
-    (err, row) => {
-      if (err) return res.status(500).json({ error: 'Internal server error.' });
-      if (!row) return res.status(404).json({ error: 'Application not found.' });
-      if (row.organization_id !== orgId) return res.status(403).json({ error: 'Forbidden.' });
+  try {
+    // Ensure this application belongs to an offer owned by the org
+    const authCheck = await db.query(
+      `SELECT Offers.organization_id FROM Applications JOIN Offers ON Applications.offer_id = Offers.id WHERE Applications.id = $1`,
+      [applicationId]
+    );
+    
+    if (authCheck.rows.length === 0) return res.status(404).json({ error: 'Application not found.' });
+    if (authCheck.rows[0].organization_id !== orgId) return res.status(403).json({ error: 'Forbidden.' });
 
-      db.run(
-        `UPDATE Applications SET status = ? WHERE id = ?`,
-        [status, applicationId],
-        function(err) {
-          if (err) return res.status(500).json({ error: 'Internal server error.' });
-          res.json({ success: true, status });
-        }
-      );
-    }
-  );
+    await db.query(`UPDATE Applications SET status = $1 WHERE id = $2`, [status, applicationId]);
+    res.json({ success: true, status });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
 });
 
 module.exports = router;

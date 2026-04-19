@@ -19,41 +19,35 @@ router.post('/register', async (req, res) => {
     const saltRounds = 10;
     const password_hash = await bcrypt.hash(password, saltRounds);
 
-    db.run(
-      `INSERT INTO Users (name, email, password_hash, role) VALUES (?, ?, ?, ?)`,
-      [name, email, password_hash, role],
-      function (err) {
-        if (err) {
-          if (err.message.includes('UNIQUE constraint failed')) {
-            return res.status(400).json({ error: 'Email already exists.' });
-          }
-          console.error(err);
-          return res.status(500).json({ error: 'Internal server error.' });
-        }
-        res.status(201).json({ id: this.lastID, name, email, role });
-      }
+    const result = await db.query(
+      `INSERT INTO Users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id`,
+      [name, email, password_hash, role]
     );
+    
+    res.status(201).json({ id: result.rows[0].id, name, email, role });
   } catch (err) {
+    if (err.code === '23505') { // PostgreSQL unique constraint violation
+      return res.status(400).json({ error: 'Email already exists.' });
+    }
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password required.' });
   }
 
-  db.get(`SELECT * FROM Users WHERE email = ?`, [email], async (err, user) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).json({ error: 'Internal server error.' });
-    }
-    if (!user) {
+  try {
+    const result = await db.query(`SELECT * FROM Users WHERE email = $1`, [email]);
+    if (result.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials.' });
     }
+
+    const user = result.rows[0];
 
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) {
@@ -67,7 +61,10 @@ router.post('/login', (req, res) => {
     );
 
     res.json({ token, user: { id: user.id, name: user.name, role: user.role, email: user.email }});
-  });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error.' });
+  }
 });
 
 module.exports = router;
